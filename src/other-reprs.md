@@ -75,7 +75,106 @@ Foo(f32)` to always have the same ABI as `f32`.
 
 More details are in the [RFC][rfc-transparent].
 
+As an extended example, it is instructive to think about transparent types
+in terms of wrappers.
 
+In Rust we can define an integer type three ways
+
+```
+struct Wrapper1(u32);
+struct Wrapper2 {
+    value: u32
+}
+
+fn main() {
+    let x:u32 = 4;
+    let y:Wrapper1 = Wrapper1(4);
+    let z:Wrapper2 = Wrapper2{ value: 4 };
+}
+```
+
+This defines an integer, a tuple with a single member, and a struct
+with a single field.  They are three different types, but they are all
+represented by four bytes in memory representing the value 4.  They
+all represent the value 4, but they are not 4.  In particular, we can
+write `x+1` but we cannot write `y+1` or `z+1`.
+
+There are two reasons you might want to use a wrapper:
+
+* New types: You can use wrappers `Vec1Index` and `Vec2Index` around
+  integers and create types `Vec1` and `Vec2` that can be indexed by
+  `Vec1Index(4)` and `Vec2Index(4)` respectively but not vice versa.
+  The wrappers `Vec1Index(4)` and `Vec2Index(4)` around the integer `4`
+  define new, distinct types even though the underlying representation
+  is just four bytes representing the integer `4`.
+
+* New assertions: You can use a wrapper like `Positive` around an
+  integer to indicate to the user that the integer is guaranteed to be
+  positive.  Just ensure that `Positive::new(4)` succeeds and
+  `Postive::new(0)` panics, so the value wrapped by `Positive` is
+  guaranteed to be positive.
+
+Again, the integer wrappers above are all respresented by four bytes.
+The method of accessing the four bytes, however, differ.  We can write
+`x+1` and not `z+1`, but we can write `z.value+1`.
+
+Rust lets us annotate wrappers with the "transparent" attribute. (Rust
+allows the wrappers to have additional zero-length fields like phantom
+data, but let's ignore that for now).
+See the
+[Transparent RFC](https://rust-lang.github.io/rfcs/1758-repr-transparent.html) for
+an excellent discussion.
+
+The purpose of the transparent attribute on an integer wrapper is to
+allow us to silently transmute between the integer and the integer
+wrapper.  It is a mistake to read the documentation as saying that the
+wrapper just disappears when it is declared transparent.  Even if we
+make `Wrapper1` and `Wrapper2` above transparent, that doesn't mean that
+in Rust code we can treat them like ordinary integers.  We still have to
+use tuple or field selection to access the underlying integer, even
+though they have the same underlying representation.
+
+The place where transparent becomes interesting is in a foreign
+function interface (FFI).
+
+There are two reasons you might want to declare a wrapper to be
+transparent in the conext of an FFI:
+
+* You might want to give an assurance or a warning about the return
+  value from a function.  Imagine C function that returns a `u32` as a
+  return value `rv`.  You might want to wrap `rv` in a wrapper
+  `Postive(rv)` or `Warning(rv)` because you know that `rv` is positive
+  or you know there might be something dangerous about `rv` that a user
+  should be forced to check.  If we declare the wrapper to be
+  transparent, then the FFI is allowed to silently transmute the `u32`
+  return value `rv` into `Positive(rv)` or `Warning(rv)`.
+
+* You might be compiling to an architecture that does not allow
+  functions to return structs, so a function fundamentally cannot return
+  a tuple or struct wrapper.  The original motivation for transparent
+  appears to be the ARM architecture where a struct value is returned by
+  passing the function a pointer to the destination struct, and the
+  function fills in the struct via the pointer.  This is true even for a
+  wrapper struct like ours that contains only a single integer field,
+  and even if the function is fully capable of returning the integer
+  value intended to be contained in that field.
+
+It is this second case and discussion in the literature of "handling"
+the integer wrapper as if it were just an integer that can lead to
+confusion.
+
+What transparent really means is that the underlying representation of
+the wrapper is the same as the underlying representation of the wrapped
+value.  But this is often naturally true.  An u32 and a u32 struct
+wrapper are both going to consume four bytes.  A struct containing a u32
+struct wrapper as a substruct is going to allocate four bytes for the
+u32 struct wrapper just as if would allocate four bytes for the u32 if
+the u32 struct wrapper were replaced by the u32 itself.
+But the struct containing the u32 wrapper and the
+struct containing the u32 are different structs with different types,
+even though the underlying representations are the same.
+The method of accessing the u32 value is different: access the wrapped u32
+with struct.member.submember versus access the u32 with struct.member.
 
 # repr(u*), repr(i*)
 
